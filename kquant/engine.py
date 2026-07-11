@@ -45,6 +45,28 @@ class BacktestResult:
     skipped_days: int
 
 
+@dataclass
+class SessionState:
+    """Mutable per-session state, stepped one bar at a time.
+
+    Shared by the backtest loop and the live signal generator so both run the
+    IDENTICAL decision logic (backtest/live parity).
+    """
+    or_high: float
+    or_low: float
+    or_range: float
+    equity: float
+    pos: object = None                 # open Trade or None
+    pending: object = None             # queued market entry -> fill next bar open
+    armed_long: bool = True
+    armed_short: bool = True
+    retest_long: object = None
+    retest_short: object = None
+    n_side: dict = field(default_factory=lambda: {"long": 0, "short": 0})
+    n_day: int = 0
+    trades: list = field(default_factory=list)
+
+
 class ORBBacktester:
     def __init__(self, cfg: ORBConfig):
         self.cfg = cfg
@@ -108,110 +130,111 @@ class ORBBacktester:
             return None, None
         return or_high, or_low
 
-    def _run_session(self, day, g, or_high, or_low, equity):
-        cfg, spec = self.cfg, self.spec
-        tick = spec.tick_size
-        buf = cfg.break_buffer_ticks * tick
-        or_range = or_high - or_low
-
-        # bars strictly after the opening range
+    def _active_bars(self, g: pd.DataFrame) -> pd.DataFrame:
+        """Bars strictly after the opening range, within the session."""
+        cfg = self.cfg
         open_t = cfg.session_open
         end_min = open_t.hour * 60 + open_t.minute + cfg.or_minutes
         start_t = time(end_min // 60, end_min % 60)
-        active = g.between_time(start_t, cfg.session_close)
+        return g.between_time(start_t, cfg.session_close)
 
-        pos = None
-        pending = None                 # queued market entry -> fill next-bar open
-        armed_long = armed_short = True
-        retest_long = retest_short = None   # {'expires': idx}
-        n_side = {"long": 0, "short": 0}
-        n_day = 0
-        trades: list[Trade] = []
-
-        rows = list(active.itertuples())
+    def _run_session(self, day, g, or_high, or_low, equity):
+        st = SessionState(or_high=or_high, or_low=or_low,
+                          or_range=or_high - or_low, equity=equity)
+        rows = list(self._active_bars(g).itertuples())
         for i, bar in enumerate(rows):
-            t = bar.Index.time()
-
-            # 0) EOD force-flat (§3) -----------------------------------------
-            if pos is not None and t >= cfg.eod_flat:
-                pos, tr = self._close(pos, bar.open, bar.Index, "eod", market=True)
-                equity += tr.pnl; trades.append(tr)
-                armed_long = armed_short = True
-            if t >= cfg.eod_flat:
-                pending = None
-                continue
-
-            # 1) fill queued market entry at this bar's open -----------------
-            if pending is not None and pos is None:
-                pos = self._open(pending["side"], bar.open, bar.Index,
-                                  or_high, or_low, or_range, bar.atr, equity,
-                                  market=True)
-                pending = None
-                if pos is not None:
-                    n_side[pos.side] += 1; n_day += 1
-
-            # 2) manage open position ---------------------------------------
-            if pos is not None:
-                pos.bars_in_trade += 1
-                ex = self._intrabar_exit(pos, bar)
-                if ex is None and self._time_stop_hit(pos, bar, or_high, or_low):
-                    ex = (bar.close, "time_stop", True)
-                if ex is None and cfg.exit_mode == "trail":
-                    self._update_trail(pos, bar)
-                    ex = self._intrabar_exit(pos, bar)  # re-check after trail
-                if ex is not None:
-                    price, reason, market = ex
-                    pos, tr = self._close(pos, price, bar.Index, reason, market)
-                    equity += tr.pnl; trades.append(tr)
-                    # disarm the side just traded; it re-arms on re-entry inside
-                    if tr.side == "long": armed_long = False
-                    else: armed_short = False
-
-            # 3) re-arm when price is back inside the range (§5.4) -----------
-            if bar.close <= or_high: armed_long = True
-            if bar.close >= or_low:  armed_short = True
-
-            # 4) look for new entries (flat, before cutoff) -----------------
-            if pos is None and pending is None and t < cfg.entry_cutoff \
-                    and n_day < cfg.max_trades_day:
-                if cfg.variant == "retest":
-                    pending, retest_long, retest_short = self._retest_logic(
-                        i, bar, or_high, or_low, buf, armed_long, armed_short,
-                        retest_long, retest_short)
-                    # consume arm when a breakout starts a retest watch
-                    if retest_long is not None and bar.close > or_high + buf:
-                        armed_long = False
-                    if retest_short is not None and bar.close < or_low - buf:
-                        armed_short = False
-                    # touch-mode fills immediately (pending may be dict w/ open now)
-                    if pending is not None and pending.get("immediate"):
-                        pos = self._open(pending["side"], pending["price"],
-                                         bar.Index, or_high, or_low, or_range,
-                                         bar.atr, equity, market=False)
-                        pending = None
-                        if pos is not None:
-                            n_side[pos.side] += 1; n_day += 1
-                else:
-                    pending = self._breakout_logic(
-                        bar, or_high, or_low, buf, armed_long, armed_short,
-                        n_side)
-                    if pending is not None:
-                        if pending["side"] == "long": armed_long = False
-                        else: armed_short = False
-                        if cfg.fill_on_close:  # aggressive: fill at this close
-                            pos = self._open(pending["side"], bar.close, bar.Index,
-                                             or_high, or_low, or_range, bar.atr,
-                                             equity, market=True)
-                            pending = None
-                            if pos is not None:
-                                n_side[pos.side] += 1; n_day += 1
-
-        # safety: close anything still open at last bar
-        if pos is not None and rows:
+            self._step(st, i, bar)
+        # safety: close anything still open at the last bar
+        if st.pos is not None and rows:
             last = rows[-1]
-            pos, tr = self._close(pos, last.close, last.Index, "eod", market=True)
-            equity += tr.pnl; trades.append(tr)
-        return trades, equity
+            _, tr = self._close(st.pos, last.close, last.Index, "eod", market=True)
+            st.pos = None
+            st.equity += tr.pnl
+            st.trades.append(tr)
+        return st.trades, st.equity
+
+    def _step(self, st: SessionState, i: int, bar) -> None:
+        """Advance one execution bar. Mutates `st`. Used by backtest AND live
+        signal so the two never diverge."""
+        cfg, spec = self.cfg, self.spec
+        buf = cfg.break_buffer_ticks * spec.tick_size
+        or_high, or_low, or_range = st.or_high, st.or_low, st.or_range
+        t = bar.Index.time()
+
+        # 0) EOD force-flat (§3) --------------------------------------------
+        if st.pos is not None and t >= cfg.eod_flat:
+            _, tr = self._close(st.pos, bar.open, bar.Index, "eod", market=True)
+            st.pos = None
+            st.equity += tr.pnl; st.trades.append(tr)
+            st.armed_long = st.armed_short = True
+        if t >= cfg.eod_flat:
+            st.pending = None
+            return
+
+        # 1) fill queued market entry at this bar's open --------------------
+        if st.pending is not None and st.pos is None:
+            st.pos = self._open(st.pending["side"], bar.open, bar.Index,
+                                or_high, or_low, or_range, bar.atr, st.equity,
+                                market=True)
+            st.pending = None
+            if st.pos is not None:
+                st.n_side[st.pos.side] += 1; st.n_day += 1
+
+        # 2) manage open position -------------------------------------------
+        if st.pos is not None:
+            st.pos.bars_in_trade += 1
+            ex = self._intrabar_exit(st.pos, bar)
+            if ex is None and self._time_stop_hit(st.pos, bar, or_high, or_low):
+                ex = (bar.close, "time_stop", True)
+            if ex is None and cfg.exit_mode == "trail":
+                self._update_trail(st.pos, bar)
+                ex = self._intrabar_exit(st.pos, bar)  # re-check after trail
+            if ex is not None:
+                price, reason, market = ex
+                side = st.pos.side
+                _, tr = self._close(st.pos, price, bar.Index, reason, market)
+                st.pos = None
+                st.equity += tr.pnl; st.trades.append(tr)
+                # disarm the side just traded; it re-arms on re-entry inside
+                if side == "long": st.armed_long = False
+                else: st.armed_short = False
+
+        # 3) re-arm when price is back inside the range (§5.4) --------------
+        if bar.close <= or_high: st.armed_long = True
+        if bar.close >= or_low:  st.armed_short = True
+
+        # 4) look for new entries (flat, before cutoff) ---------------------
+        if st.pos is None and st.pending is None and t < cfg.entry_cutoff \
+                and st.n_day < cfg.max_trades_day:
+            if cfg.variant == "retest":
+                st.pending, st.retest_long, st.retest_short = self._retest_logic(
+                    i, bar, or_high, or_low, buf, st.armed_long, st.armed_short,
+                    st.retest_long, st.retest_short)
+                if st.retest_long is not None and bar.close > or_high + buf:
+                    st.armed_long = False
+                if st.retest_short is not None and bar.close < or_low - buf:
+                    st.armed_short = False
+                if st.pending is not None and st.pending.get("immediate"):
+                    st.pos = self._open(st.pending["side"], st.pending["price"],
+                                        bar.Index, or_high, or_low, or_range,
+                                        bar.atr, st.equity, market=False)
+                    st.pending = None
+                    if st.pos is not None:
+                        st.n_side[st.pos.side] += 1; st.n_day += 1
+            else:
+                st.pending = self._breakout_logic(
+                    bar, or_high, or_low, buf, st.armed_long, st.armed_short,
+                    st.n_side)
+                if st.pending is not None:
+                    if st.pending["side"] == "long": st.armed_long = False
+                    else: st.armed_short = False
+                    if cfg.fill_on_close:  # aggressive: fill at this close
+                        st.pos = self._open(st.pending["side"], bar.close,
+                                            bar.Index, or_high, or_low, or_range,
+                                            bar.atr, st.equity, market=True)
+                        st.pending = None
+                        if st.pos is not None:
+                            st.n_side[st.pos.side] += 1; st.n_day += 1
 
     # -- entry logic -------------------------------------------------------
     def _breakout_logic(self, bar, or_high, or_low, buf, armed_long, armed_short, n_side):
