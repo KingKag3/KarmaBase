@@ -1,0 +1,40 @@
+# --- Secrets / credentials (never commit) ---
+.env
+.env.*
+*.key
+*.pem
+secrets.*
+credentials.*
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# --- Data / large artifacts ---
+data/
+*.csv
+*.parquet
+*.h5
+*.pkl
+*.log
+
+# --- Claude Code (personal/local) ---
+.claude/settings.local.json
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Build ---
+dist/
+build/
+node_modules/
