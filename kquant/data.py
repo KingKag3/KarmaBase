@@ -80,3 +80,63 @@ def sessions(df: pd.DataFrame):
     for day, g in rth.groupby(rth.index.date):
         if len(g) >= 2:
             yield day, g
+
+
+# ---------------------------------------------------------------------------
+# Dukascopy index-CFD loader (near-24h proxy for ES/NQ futures)
+# ---------------------------------------------------------------------------
+_DUKA_INTERVAL = {"1m": "INTERVAL_MIN_1", "5m": "INTERVAL_MIN_5",
+                  "15m": "INTERVAL_MIN_15", "1h": "INTERVAL_HOUR_1"}
+
+
+def load_dukascopy(duka_code: str, interval: str = "5m",
+                   start_year: int = 2015, end_year: int | None = None,
+                   use_cache: bool = True) -> pd.DataFrame:
+    """Fetch Dukascopy index-CFD OHLCV, cached per calendar year, returned in ET.
+
+    Data source is nearly 24h and tracks the cash index, so the 09:30 ET open and
+    gap behavior resemble the futures far better than RTH-only SPY/QQQ. It is a
+    CFD (no contract roll); treat as a high-fidelity proxy, not the exact contract.
+    """
+    import datetime as dt
+    import logging
+
+    import dukascopy_python as dk
+    from dukascopy_python import instruments as _ins
+
+    logging.getLogger("DUKASCRIPT").setLevel(logging.WARNING)  # silence per-month spam
+    end_year = end_year or dt.date.today().year
+    interval_const = getattr(dk, _DUKA_INTERVAL[interval])
+    # resolve the instrument constant whose value matches duka_code
+    inst = next(getattr(_ins, n) for n in dir(_ins)
+                if getattr(_ins, n) == duka_code)
+    safe = duka_code.replace("/", "_").replace("&", "and")
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    frames = []
+    today = dt.date.today()
+    for year in range(start_year, end_year + 1):
+        cache = CACHE_DIR / f"duka_{safe}_{interval}_{year}.csv"
+        if use_cache and cache.exists():
+            part = pd.read_csv(cache, index_col=0, parse_dates=True)
+            part.index = pd.to_datetime(part.index, utc=True)
+        else:
+            end = min(dt.datetime(year + 1, 1, 1), dt.datetime(today.year, today.month, today.day))
+            if dt.datetime(year, 1, 1) >= end:
+                continue
+            part = dk.fetch(inst, interval_const, dk.OFFER_SIDE_BID,
+                            dt.datetime(year, 1, 1), end)
+            if part.empty:
+                continue
+            part.index = pd.to_datetime(part.index, utc=True)
+            part = part[["open", "high", "low", "close", "volume"]].astype(float)
+            # only cache complete past years
+            if year < today.year:
+                part.to_csv(cache)
+        frames.append(part)
+
+    if not frames:
+        raise RuntimeError(f"No Dukascopy data for {duka_code} {start_year}-{end_year}.")
+    df = pd.concat(frames)
+    df.index = df.index.tz_convert(ET)
+    return _clean(df)

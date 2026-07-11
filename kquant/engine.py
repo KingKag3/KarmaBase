@@ -221,6 +221,17 @@ class ORBBacktester:
                     st.pending = None
                     if st.pos is not None:
                         st.n_side[st.pos.side] += 1; st.n_day += 1
+                        # a same-bar limit fill must face THIS bar's stop/target,
+                        # not escape the bar's continuation (no look-ahead free ride)
+                        ex = self._same_bar_exit(st.pos, bar)
+                        if ex is not None:
+                            price, reason, market = ex
+                            side = st.pos.side
+                            _, tr = self._close(st.pos, price, bar.Index, reason, market)
+                            st.pos = None
+                            st.equity += tr.pnl; st.trades.append(tr)
+                            if side == "long": st.armed_long = False
+                            else: st.armed_short = False
             else:
                 st.pending = self._breakout_logic(
                     bar, or_high, or_low, buf, st.armed_long, st.armed_short,
@@ -258,17 +269,12 @@ class ORBBacktester:
         rbuf = cfg.retest_buffer_ticks * tick
         pending = None
 
-        # arm a retest watch on a fresh breakout close
-        if retest_long is None and armed_long and bar.close > or_high + buf:
-            retest_long = {"expires": i + cfg.retest_window}
-        if retest_short is None and armed_short and bar.close < or_low - buf:
-            retest_short = {"expires": i + cfg.retest_window}
-
-        # long retest
+        # long retest — check on bars AFTER the arm bar only (the resting limit
+        # can't fill on the same bar whose close first revealed the breakout).
         if retest_long is not None:
             if bar.close < or_low or i > retest_long["expires"]:
                 retest_long = None                      # failed / expired
-            elif bar.low <= or_high + rbuf:             # pullback tag
+            elif i > retest_long["armed_at"] and bar.low <= or_high + rbuf:
                 if cfg.retest_confirm == "touch":
                     pending = {"side": "long", "immediate": True, "price": or_high}
                     retest_long = None
@@ -279,13 +285,20 @@ class ORBBacktester:
         if pending is None and retest_short is not None:
             if bar.close > or_high or i > retest_short["expires"]:
                 retest_short = None
-            elif bar.high >= or_low - rbuf:
+            elif i > retest_short["armed_at"] and bar.high >= or_low - rbuf:
                 if cfg.retest_confirm == "touch":
                     pending = {"side": "short", "immediate": True, "price": or_low}
                     retest_short = None
                 elif bar.close < or_low:
                     pending = {"side": "short"}
                     retest_short = None
+
+        # arm a retest watch on a fresh breakout close (AFTER the touch check, so
+        # the arming bar itself can never trigger a fill)
+        if retest_long is None and armed_long and bar.close > or_high + buf:
+            retest_long = {"expires": i + cfg.retest_window, "armed_at": i}
+        if retest_short is None and armed_short and bar.close < or_low - buf:
+            retest_short = {"expires": i + cfg.retest_window, "armed_at": i}
         return pending, retest_long, retest_short
 
     # -- position open/close ----------------------------------------------
@@ -334,6 +347,22 @@ class ORBBacktester:
         else:
             if bar.open >= pos.stop:
                 return (bar.open, "stop", True)
+            if bar.high >= pos.stop:
+                return (pos.stop, "stop", True)
+            if pos.target is not None and bar.low <= pos.target:
+                return (pos.target, "target", False)
+        return None
+
+    def _same_bar_exit(self, pos, bar):
+        """Exit check for a limit entry filled mid-bar: the bar can still hit the
+        stop/target after the fill. No open-gap branch (we entered intrabar).
+        Stop-first priority (§5.6)."""
+        if pos.side == "long":
+            if bar.low <= pos.stop:
+                return (pos.stop, "stop", True)
+            if pos.target is not None and bar.high >= pos.target:
+                return (pos.target, "target", False)
+        else:
             if bar.high >= pos.stop:
                 return (pos.stop, "stop", True)
             if pos.target is not None and bar.low <= pos.target:

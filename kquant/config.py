@@ -21,14 +21,18 @@ class Instrument:
     point_value: float    # $ per 1.0 of price movement per contract/share
     yf_symbol: str        # ticker used by the yfinance loader (proxy for futures)
     commission: float     # $ per side per unit (futures: per contract; equity: per share)
+    duka: str | None = None   # dukascopy index-CFD instrument code (near-24h proxy)
 
 
 INSTRUMENTS: dict[str, Instrument] = {
-    # Real futures (require paid intraday data for final validation)
-    "ES": Instrument("ES", tick_size=0.25, point_value=50.0, yf_symbol="SPY", commission=2.50),
-    "NQ": Instrument("NQ", tick_size=0.25, point_value=20.0, yf_symbol="QQQ", commission=2.50),
-    # Free proxies for prototyping the engine mechanics (retail equity ~ commission-free;
-    # cost is carried by slippage_ticks). Per-share commission ~ $0.
+    # Index futures. Validation uses Dukascopy index-CFD data (near-24h, tracks the
+    # cash index) as a high-fidelity free proxy; yfinance SPY/QQQ is the quick prototype.
+    "ES": Instrument("ES", tick_size=0.25, point_value=50.0, yf_symbol="SPY",
+                     commission=2.50, duka="E_SandP-500"),
+    "NQ": Instrument("NQ", tick_size=0.25, point_value=20.0, yf_symbol="QQQ",
+                     commission=2.50, duka="E_NQ-100"),
+    # Free equity proxies for prototyping the engine mechanics (retail equity ~
+    # commission-free; cost carried by slippage_ticks).
     "SPY": Instrument("SPY", tick_size=0.01, point_value=1.0, yf_symbol="SPY", commission=0.0),
     "QQQ": Instrument("QQQ", tick_size=0.01, point_value=1.0, yf_symbol="QQQ", commission=0.0),
 }
