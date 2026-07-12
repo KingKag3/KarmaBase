@@ -325,3 +325,49 @@ beat Variant A on **risk-adjusted** terms (Sharpe / MAR), not just raw return.
 ## 13. Change Log
 - 2026-07-11 — created. Baseline = ES/NQ, 15-min OR, both sides unlimited (with
   re-arm), three variants (Classic / VWAP / Breakout-Retest).
+- 2026-07-11 — real-data validation (Dukascopy 2015-2025). Found & fixed a
+  retest look-ahead; baseline ORB has no robust edge (classic/vwap negative,
+  retest marginal). Added machine manifest for the GUI.
+
+## 14. Machine Manifest
+The GUI/registry reads this block to list the strategy and build its controls.
+It is the machine-readable companion to the prose spec above.
+
+```yaml
+# kquant-manifest
+id: orb
+family: orb
+name: Opening Range Breakout
+description: First move beyond the opening range; classic / VWAP-filtered / retest variants.
+variants: [classic, vwap, retest]
+instruments: [ES, NQ, SPY, QQQ]
+status: validated-no-edge
+params:
+  or_minutes:
+    default: 15
+    choices: [5, 15, 30, 60]
+    label: Opening range (minutes)
+  exec_tf:
+    default: "5m"
+    choices: ["1m", "5m"]
+    label: Execution timeframe
+  target_R:
+    default: 1.0
+    min: 0.5
+    max: 3.0
+    step: 0.5
+    label: Target (R multiple)
+  stop_mode:
+    default: opposite_range
+    choices: [opposite_range, range_mid, atr, fixed_ticks]
+    label: Stop placement
+  risk_pct:
+    default: 0.01
+    min: 0.0025
+    max: 0.03
+    step: 0.0025
+    label: Risk per trade (fraction)
+  use_time_stop:
+    default: true
+    label: Time-stop failed breakouts
+```

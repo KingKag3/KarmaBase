@@ -2,3 +2,6 @@ numpy
 pandas
 yfinance
 matplotlib
+dukascopy-python
+streamlit
+pyyaml
