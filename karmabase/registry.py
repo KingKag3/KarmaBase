@@ -88,7 +88,23 @@ def _build_orb(variant: str, instrument: str, overrides: dict):
     return cfgmod.PRESETS[variant](instrument, **overrides)
 
 
-FAMILY_BUILDERS = {"orb": _build_orb}
+def _build_unicorn(variant: str, instrument: str, overrides: dict):
+    from .unicorn import preset
+    return preset(variant, instrument, **overrides)
+
+
+FAMILY_BUILDERS = {"orb": _build_orb, "unicorn": _build_unicorn}
+
+
+def backtester_for(family: str):
+    """Return the Backtester class for a strategy family."""
+    if family == "orb":
+        from .engine import ORBBacktester
+        return ORBBacktester
+    if family == "unicorn":
+        from .unicorn import UnicornBacktester
+        return UnicornBacktester
+    raise NotImplementedError(f"No backtester registered for family {family!r}.")
 
 
 def build_config(manifest: Manifest, variant: str, instrument: str, overrides: dict | None = None):

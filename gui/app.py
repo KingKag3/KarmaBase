@@ -43,7 +43,9 @@ def slice_years(df, y0, y1):
 
 
 def run_bt(man, variant, instrument, overrides, df):
-    res = ORBBacktester(reg.build_config(man, variant, instrument, overrides)).run(df)
+    cfg = reg.build_config(man, variant, instrument, overrides)
+    Backtester = reg.backtester_for(man.family)
+    res = Backtester(cfg).run(df)
     return res, compute(res)
 
 
