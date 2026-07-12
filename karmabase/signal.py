@@ -14,7 +14,7 @@ Output states:
   session_closed  past entry cutoff / EOD; done for the day
 
 CLI:
-    python -m kquant.signal --instrument SPY --variant retest
+    python -m karmabase.signal --instrument SPY --variant retest
 """
 from __future__ import annotations
 

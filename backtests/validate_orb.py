@@ -17,10 +17,10 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from kquant import config as cfgmod
-from kquant.data import load_dukascopy
-from kquant.engine import ORBBacktester
-from kquant.metrics import compute, summary_line
+from karmabase import config as cfgmod
+from karmabase.data import load_dukascopy
+from karmabase.engine import ORBBacktester
+from karmabase.metrics import compute, summary_line
 
 
 def _slice(df, y0, y1):

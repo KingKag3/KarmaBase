@@ -16,10 +16,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from kquant import config as cfgmod
-from kquant.data import load_intraday
-from kquant.engine import ORBBacktester
-from kquant.metrics import compute, summary_line
+from karmabase import config as cfgmod
+from karmabase.data import load_intraday
+from karmabase.engine import ORBBacktester
+from karmabase.metrics import compute, summary_line
 
 
 def main(argv=None):

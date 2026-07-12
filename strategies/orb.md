@@ -334,7 +334,7 @@ The GUI/registry reads this block to list the strategy and build its controls.
 It is the machine-readable companion to the prose spec above.
 
 ```yaml
-# kquant-manifest
+# karmabase-manifest
 id: orb
 family: orb
 name: Opening Range Breakout

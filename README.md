@@ -1,4 +1,4 @@
-# KQUANT
+# KarmaBase
 
 Quantitative research and trading project.
 

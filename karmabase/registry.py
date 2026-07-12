@@ -1,7 +1,7 @@
 """Strategy registry.
 
 Discovers strategy specs by scanning `strategies/*.md` for an embedded
-`# kquant-manifest` YAML block, and builds a runnable engine config from a
+`# karmabase-manifest` YAML block, and builds a runnable engine config from a
 manifest + user-chosen variant/instrument/param overrides.
 
 This is the bridge that lets an md file (a human spec) drive a backtest: the
@@ -20,7 +20,7 @@ import yaml
 from . import config as cfgmod
 
 STRATEGIES_DIR = Path(__file__).resolve().parent.parent / "strategies"
-_MANIFEST_RE = re.compile(r"```ya?ml\s*\n(#\s*kquant-manifest.*?)\n```", re.DOTALL)
+_MANIFEST_RE = re.compile(r"```ya?ml\s*\n(#\s*karmabase-manifest.*?)\n```", re.DOTALL)
 
 
 @dataclass
