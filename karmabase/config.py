@@ -49,7 +49,7 @@ class ORBConfig:
 
     # --- session / range (§3, §5.1) ---
     or_minutes: int = 15
-    exec_tf: str = "5m"                 # bar size: "1m" or "5m"
+    exec_tf: str = "1m"                 # bar size: "1m" (faithful) or "5m" (coarse proto)
     session_open: time = time(9, 30)
     session_close: time = time(16, 0)
     entry_cutoff: time = time(15, 30)   # no new trades after this
@@ -74,7 +74,7 @@ class ORBConfig:
     exit_mode: str = "r_multiple"       # r_multiple | measured_move | trail
     target_R: float = 1.0
     use_time_stop: bool = True
-    time_stop_bars: int = 6
+    time_stop_bars: int = 10            # in BARS; scales with exec_tf (10 = 10min on 1m)
     trail_arm_R: float = 1.0
     trail_atr_mult: float = 1.5
 

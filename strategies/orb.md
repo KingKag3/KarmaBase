@@ -64,7 +64,13 @@ momentum) and a re-arm rule exist to reduce those false-break trades.
 - **No-new-entry cutoff:** `entry_cutoff = 15:30 ET` (no fresh breakouts after this).
 - **Hard flat (EOD):** `eod_flat = 15:55 ET` — all positions force-closed at the
   open of the 15:55 bar (index futures liquidity thins into the 16:00 cash close).
-- **Holding period:** intraday only; **no overnight positions**.
+- **Holding period:** intraday only, **no overnight positions**, and in practice
+  **most trades resolve in under ~10 minutes** (fast stop/target/time-stop hits).
+- **⚠️ Bar-resolution requirement:** because typical holds are ~10 min, the
+  execution bar must be **much finer** than the trade duration or the backtest is
+  guessing the intrabar path. On `5m` bars a 10-min trade is only ~2 bars, so the
+  conservative stop-first assumption dominates and results are unreliable.
+  **Validate on `exec_tf = 1m`** (≈10 bars/trade); treat 5m as a rough prototype only.
 
 ---
 
@@ -139,9 +145,10 @@ Define per-trade risk distance `R_dist = |entry - stop|` (points).
   `trail_atr_mult = 1.5`).
 - `time_stop` (combinable flag `use_time_stop`, default **on**): if price
   **re-enters the opposite side of the range** (long: a bar closes `< OR_high`;
-  i.e. back inside) within `time_stop_bars = 6` exec bars of entry and trade is
+  i.e. back inside) within `time_stop_bars` exec bars of entry and trade is
   not yet `>= 0.5R` in profit, exit at next bar open. Captures "failed ORB
-  reverses quickly."
+  reverses quickly." **`time_stop_bars` is in BARS, so it scales with `exec_tf`:**
+  on 5m, `6` = 30 min (too loose given ~10-min holds); on 1m use ≈`10` (10 min).
 - **Partial scaling** (optional `scale_out`, default off): take 50% at 1R, trail
   remainder.
 - **EOD flat** (§3) always applies.
@@ -328,6 +335,8 @@ beat Variant A on **risk-adjusted** terms (Sharpe / MAR), not just raw return.
 - 2026-07-11 — real-data validation (Dukascopy 2015-2025). Found & fixed a
   retest look-ahead; baseline ORB has no robust edge (classic/vwap negative,
   retest marginal). Added machine manifest for the GUI.
+- 2026-07-11 — noted typical holds < ~10 min → 5m bars too coarse; switch
+  validation to 1m bars (≈10 bars/trade) and scale `time_stop_bars` accordingly.
 
 ## 14. Machine Manifest
 The GUI/registry reads this block to list the strategy and build its controls.
@@ -348,9 +357,13 @@ params:
     choices: [5, 15, 30, 60]
     label: Opening range (minutes)
   exec_tf:
-    default: "5m"
+    default: "1m"
     choices: ["1m", "5m"]
     label: Execution timeframe
+  time_stop_bars:
+    default: 10
+    choices: [4, 6, 10, 15]
+    label: Time-stop (bars; ~min on 1m)
   target_R:
     default: 1.0
     min: 0.5
